@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="pt">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Gerenciador de Robôs e Produção de Tratores</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
+    <!-- Font Awesome para ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
+        integrity="sha512-Fo3rlrZj/kTcOnQyD/1eH+0FbF3jrLLj5V6F4Hl5k5b7CUemwS5bG0h4EGJ5xJcHJ8Yrw5h+Y+Sz71DkIp5GrA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        .production-step {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+
+<body class="container-fluid p-0" style="height: 100vh;">
+    <h1 class="text-center">Gerenciador de Robôs e Produção de Tratores</h1>
+    <div class="row" style="min-height: 100vh;">
+        <!-- Coluna da esquerda: Ações de robô e criação de trator -->
+        <div class="col-md-3" style="padding-left: 3%;">
+            <h3>Adicionar Robô</h3>
+            <input id="robot_name" type="text" class="form-control" placeholder="Nome do Robô">
+            <input id="robot_x" type="number" class="form-control mt-2" placeholder="Posição X">
+            <input id="robot_y" type="number" class="form-control mt-2" placeholder="Posição Y">
+            <button class="btn btn-primary mt-2" onclick="addRobot()">Adicionar</button>
+
+            <h3 class="mt-4">Solicitar Missão de Entrega</h3>
+            <label for="robot_select" class="mt-2">Selecione o Robô</label>
+            <select id="robot_select" class="form-control mt-1"></select>
+            <label for="pickup_select">Área de Pick-up (Armazém)</label>
+            <select id="pickup_select" class="form-control mt-1"></select>
+            <label for="delivery_select">Área de Entrega (Célula)</label>
+            <select id="delivery_select" class="form-control mt-1"></select>
+            <label for="items_text" class="mt-2">Itens (separados por vírgula)</label>
+            <input id="items_text" type="text" class="form-control mt-1" placeholder="ex: peca5, peca6">
+            <button class="btn btn-success mt-2" onclick="handleDeliveryMission()">Solicitar Missão</button>
+
+            <!-- Seção: Criação de Trator -->
+            <h3 class="mt-4">Criar Trator</h3>
+            <input id="tractor_id" type="text" class="form-control" placeholder="Nome do Trator">
+            <div id="production_steps" class="mt-2">
+                <!-- Primeira etapa -->
+                <div class="production-step row">
+                    <div class="col-6">
+                        <select class="cell_select form-control">
+                            <!-- Opções serão populadas com as células -->
+                        </select>
+                    </div>
+                    <div class="col-4">
+                        <input type="text" class="kit_input form-control" placeholder="Kits (ex: peca1, peca2)">
+                    </div>
+                    <div class="col-2">
+                        <button class="btn btn-danger remove_step" onclick="removeStep(this)"><i
+                                class="fas fa-times"></i></button>
+                    </div>
+                </div>
+            </div>
+            <button class="btn btn-secondary mt-2" id="add_step">Adicionar Etapa</button>
+            <button class="btn btn-primary mt-2" id="create_tractor">Criar Trator</button>
+        </div>
+
+        <!-- Coluna central: Mapa e Gerenciamento + Status de Produção de Tratores -->
+        <div class="col-md-6">
+            <div style="height:600px; overflow:hidden;">
+                <canvas id="robotMap" style="width:100%; height:100%;"></canvas>
+            </div>
+            <div id="cells_panel">
+
+            </div>
+            <div id="tractor_panel" class="border p-2 mt-2">
+                <h4>Gerenciar e Visualizar Produção dos Tratores</h4>
+                <ul id="tractor_ul" class="list-group"></ul>
+            </div>
+        </div>
+
+        <!-- Coluna da direita: Status dos Robôs e Peças -->
+        <div class="col-md-3" style="padding-right: 1%;">
+            <h3 class="mt-4">Status de Todos os Robôs</h3>
+            <div id="all_robots_details" class="border p-2"></div>
+            <h3 class="mt-4">Status das Peças</h3>
+            <div id="pieces_status" class="border p-2"></div>
+            <div id="mir_status_panel" class="card mt-4">
+                <div class="card-header bg-primary text-white">
+                    <h4 id="mir_name">MIR - Carregando...</h4>
+                </div>
+                <div class="card-body">
+                    <p id="mir_mission"><strong>Missão:</strong> Carregando...</p>
+                    <p id="mir_battery"><strong>Bateria:</strong> Carregando...</p>
+                    <p id="mir_state"><strong>Estado:</strong> Carregando...</p>
+                    <p id="mir_mode"><strong>Modo:</strong> Carregando...</p>
+                    <p id="mir_position"> <strong>Posição:</strong> Carregando... </p>
+                    <p id="mir_orientation"><strong>Orientação:</strong> Carregando...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Edição de Trator -->
+    <div class="modal fade" id="editTractorModal" tabindex="-1" aria-labelledby="editTractorModalLabel"
+        aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <form id="editTractorForm">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="editTractorModalLabel">Editar Trator</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" id="editTractorId">
+                        <div id="editTractorSteps"></div>
+                        <button type="button" class="btn btn-secondary mt-2" id="addEditStep">Adicionar Etapa</button>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Salvar Alterações</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        let robotChart;
+        let robotsData = {};
+        let walls = [];
+        let areas = [];  // lista de áreas (células)
+
+        // Plugin para desenhar labels personalizados no Chart.js
+        const customLabelsPlugin = {
+            id: "customLabels",
+            beforeDraw(chart) {
+                const ctx = chart.ctx;
+                ctx.save();
+                const labelConfigs = chart.options.plugins.customLabels;
+                if (!labelConfigs || !labelConfigs.labels) return;
+                labelConfigs.labels.forEach(label => {
+                    const x = chart.scales.x.getPixelForValue(label.x);
+                    const y = chart.scales.y.getPixelForValue(label.y);
+                    ctx.font = "12px Arial";
+                    ctx.fillStyle = "black";
+                    ctx.textAlign = "center";
+                    ctx.fillText(label.text, x, y);
+                });
+                ctx.restore();
+            }
+        };
+
+        function createChart() {
+            const ctx = document.getElementById('robotMap').getContext('2d');
+            Chart.register(customLabelsPlugin);
+            robotChart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets: [] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    elements: { line: { tension: 0 } },
+                    scales: {
+                        x: { type: 'linear', position: 'bottom', min: -100, max: 100 },
+                        y: { min: -120, max: 120 }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        customLabels: { labels: [] }
+                    }
+                }
+            });
+        }
+
+        async function loadMapData() {
+            try {
+                const res = await axios.get(`${API_URL}/status`);
+                walls = res.data.walls || [];
+                areas = res.data.areas || [];
+                const doors = res.data.doors || [];
+                // drawWalls();
+                drawAreas(areas);
+                drawDoors(doors);
+                populateAreasSelects(areas);
+                populateCellSelects(areas); // Preenche o select das células no formulário de trator
+            } catch (error) {
+                console.error("Erro ao carregar dados do mapa:", error);
+            }
+        }
+
+        // function drawWalls() {
+        //     let wallDataset = {
+        //         label: "Paredes", data: walls.map(p => ({ x: p[0], y: p[1] })),
+        //         backgroundColor: "black",
+        //         borderColor: "black",
+        //         borderWidth: 2, pointRadius: 4
+        //     };
+        //     robotChart.data.datasets.push(wallDataset);
+        //     robotChart.update();
+        // }
+
+        // Atualiza o desenho das áreas com a cor da borda definida
+        function drawAreas(areas) {
+            // Remove os datasets que representam as áreas (identificados pela flag isArea)
+            robotChart.data.datasets = robotChart.data.datasets.filter(ds => !ds.isArea);
+            // Limpa os labels existentes do plugin customLabels
+            robotChart.options.plugins.customLabels.labels = [];
+
+            let statusCount = {
+                complete: 0,
+                pending: 0,
+                noPiece: 0
+            };
+
+            areas.forEach(area => {
+                const { x1, y1, x2, y2, name } = area;
+
+                let borderColor;
+                let status = "noPiece";
+
+                if (cellsStatus.hasOwnProperty(name)) {
+                    status = cellsStatus[name];
+                    if (status === "complete") {
+                        borderColor = "green";
+                    } else if (status === "pending") {
+                        borderColor = "red";
+                    } else {
+                        borderColor = "yellow";
+                    }
+                } else {
+                    borderColor = "yellow";
+                }
+
+                // Contabiliza o status
+                if (statusCount.hasOwnProperty(status)) {
+                    statusCount[status]++;
+                }
+
+                // Adiciona o dataset da célula com a flag isArea para identificação
+                robotChart.data.datasets.push({
+                    isArea: true,
+                    label: name,
+                    data: [
+                        { x: x1, y: y1 }, { x: x2, y: y1 },
+                        { x: x2, y: y2 }, { x: x1, y: y2 },
+                        { x: x1, y: y1 }
+                    ],
+                    borderColor: borderColor,
+                    backgroundColor: "rgba(100, 100, 250, 0.2)",
+                    borderWidth: 2,
+                    showLine: true,
+                    fill: true
+                });
+
+                // Adiciona um rótulo central com o nome da célula
+                let centerX = (x1 + x2) / 2;
+                let centerY = (y1 + y2) / 2;
+                robotChart.options.plugins.customLabels.labels.push({
+                    x: centerX,
+                    y: centerY,
+                    text: name,
+                    color: "black"
+                });
+            });
+
+            // Atualiza o status no frontend
+            // Atualiza o status no frontend com um layout mais bonito
+            document.getElementById("cells_panel").innerHTML = `
+        <div style="padding: 10px; border-radius: 8px; background: #f8f9fa; box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);">
+            <h4 style="text-align: center; margin-bottom: 10px;">Status das Células</h4>
+            <p style="color: green; font-weight: bold;"><strong>✅ Completas:</strong> ${statusCount.complete}</p>
+            <p style="color: red; font-weight: bold;"><strong>⚠️ Pendentes:</strong> ${statusCount.pending}</p>
+            <p style="color: orange; font-weight: bold;"><strong>🟡 Ociosas:</strong> ${statusCount.noPiece}</p>
+        </div>
+    `;
+
+
+            robotChart.update();
+        }
+
+
+
+        function drawDoors(doors) {
+            doors.forEach(door => {
+                robotChart.data.datasets.push({
+                    label: "Porta",
+                    data: [{ x: door[0], y: door[1] }],
+                    backgroundColor: "green",
+                    borderColor: "black",
+                    borderWidth: 2,
+                    pointRadius: 5
+                });
+            });
+            robotChart.update();
+        }
+
+        function populateAreasSelects(areas) {
+            const pickupSelect = document.getElementById("pickup_select");
+            const deliverySelect = document.getElementById("delivery_select");
+            pickupSelect.innerHTML = "";
+            deliverySelect.innerHTML = "";
+            areas.forEach(area => {
+                let optionPickup = document.createElement("option");
+                optionPickup.value = area.name;
+                optionPickup.textContent = area.name;
+                pickupSelect.appendChild(optionPickup);
+                let optionDelivery = document.createElement("option");
+                optionDelivery.value = area.name;
+                optionDelivery.textContent = area.name;
+                deliverySelect.appendChild(optionDelivery);
+            });
+        }
+
+        // Preenche os selects de células do formulário de produção de trator
+        function populateCellSelects(areas) {
+            const cellSelects = document.getElementsByClassName("cell_select");
+            Array.from(cellSelects).forEach(select => {
+                select.innerHTML = "";
+                areas.forEach(area => {
+                    let option = document.createElement("option");
+                    option.value = area.name;
+                    option.textContent = area.name;
+                    select.appendChild(option);
+                });
+            });
+        }
+
+        async function updateRobots() {
+            try {
+                const res = await axios.get(`${API_URL}/status`);
+                robotsData = res.data.robots || {};
+
+                updateRobotSelect();
+                redrawRobotsOnChart();
+                showAllRobotsDetails();
+                updateMir()
+
+            } catch (error) {
+                console.error("Erro ao atualizar robôs:", error);
+            }
+        }
+
+        function updateRobotSelect() {
+            const select = document.getElementById("robot_select");
+            select.innerHTML = "<option value=''>Selecione um robô (opcional)</option>";
+            for (const robotId in robotsData) {
+                let busy = robotsData[robotId].current_delivery;
+                let busyText = busy ? " (Em missão)" : "";
+                let option = document.createElement("option");
+                option.value = robotId;
+                option.textContent = robotId + busyText;
+                if (busy) { option.style.color = "red"; }
+                select.appendChild(option);
+            }
+        }
+
+        let updateInProgress = false;
+        function redrawRobotsOnChart() {
+            if (updateInProgress) return;
+            updateInProgress = true;
+            setTimeout(() => {
+                robotChart.data.datasets = robotChart.data.datasets.filter(ds => {
+                    return (ds.label === "Paredes" || ds.label === "Porta" || ds.label.includes("Montagem")
+                        || ds.label.includes("Produção") || ds.label.includes("Armazenamento")
+                        || ds.label.includes("Expedição") || ds.label === "MIR");
+                });
+                const colors = ["red", "blue", "green", "purple", "orange", "brown", "gray"];
+                let colorIndex = 0;
+                for (let robot_id in robotsData) {
+                    const robot = robotsData[robot_id];
+                    const color = colors[colorIndex % colors.length];
+                    colorIndex++;
+                    if (robot.planned_path && robot.planned_path.length > 0) {
+                        robotChart.data.datasets.push({
+                            label: `${robot_id} (Caminho Futuro)`,
+                            data: robot.planned_path.map(p => ({ x: p[0], y: p[1] })),
+                            borderColor: color,
+                            borderDash: [10, 5],
+                            showLine: true,
+                            fill: false,
+                            borderWidth: 3
+                        });
+                    }
+                    robotChart.data.datasets.push({
+                        label: `${robot_id} (Atual)`,
+                        data: [{ x: robot.position[0], y: robot.position[1] }],
+                        backgroundColor: color,
+                        borderColor: "black",
+                        borderWidth: 3,
+                        pointRadius: 8
+                    });
+                    if (robot.goal) {
+                        robotChart.data.datasets.push({
+                            label: `${robot_id} (Destino)`,
+                            data: [{ x: robot.goal[0], y: robot.goal[1] }],
+                            backgroundColor: "black",
+                            borderColor: "black",
+                            pointRadius: 6,
+                            pointStyle: 'cross'
+                        });
+                    }
+                }
+                robotChart.update('none');
+                updateInProgress = false;
+            }, 500);
+        }
+
+        function showAllRobotsDetails() {
+            let html = `
+        <table class="table table-sm table-bordered">
+          <thead class="table-light">
+            <tr>
+              <th>Robô</th>
+              <th>Posição</th>
+              <th>Goal</th>
+              <th>Tempo Estimado</th>
+              <th>Kit</th>
+              <th>Missão</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+            const colors = ["red", "blue", "green", "purple", "orange", "brown", "gray"];
+            let colorIndex = 0;
+            for (let robot_id in robotsData) {
+                let r = robotsData[robot_id];
+                let currentDelivery = r.current_delivery;
+                let missionDesc = "Nenhuma";
+                let robotColor = colors[colorIndex % colors.length];
+                colorIndex++;
+                if (currentDelivery) {
+                    missionDesc = `
+            <div><strong>Etapa:</strong> ${currentDelivery.stage}</div>
+            <div><strong>Pickup:</strong> ${currentDelivery.pickup_area}</div>
+            <div><strong>Delivery:</strong> ${currentDelivery.delivery_area}</div>
+            <div><strong>Itens:</strong> ${currentDelivery.items ? currentDelivery.items.join(", ") : ""}</div>
+          `;
+                }
+                html += `
+          <tr>
+            <td style="color: ${robotColor}; font-weight: bold;">${robot_id}</td>
+            <td>${r.area}</td>  
+            <td>${r.goal ? `${r.goal}` : "Nenhum"}</td>
+            <td>${r.estimated_time !== null ? `${r.estimated_time}s` : "Desconhecido"}</td>
+            <td>${(r.kit && r.kit.length) ? r.kit.join(", ") : "Vazio"}</td>
+            <td>${missionDesc}</td>
+          </tr>
+        `;
+            }
+            html += `</tbody></table>`;
+            document.getElementById("all_robots_details").innerHTML = html;
+        }
+
+        async function addRobot() {
+            const name = document.getElementById("robot_name").value;
+            const x = parseFloat(document.getElementById("robot_x").value);
+            const y = parseFloat(document.getElementById("robot_y").value);
+            if (name && !isNaN(x) && !isNaN(y)) {
+                try {
+                    await axios.post(`${API_URL}/add_robot`, { robot_id: name, x, y });
+                    setTimeout(updateRobots, 1000);
+                } catch (error) {
+                    console.error("Erro ao adicionar robô:", error);
+                }
+            }
+        }
+
+        function handleDeliveryMission() {
+            const robotId = document.getElementById("robot_select").value;
+            if (robotId) {
+                addDeliveryMission();
+            } else {
+                requestDeliveryMission();
+            }
+        }
+
+        async function requestDeliveryMission() {
+            const pickupArea = document.getElementById("pickup_select").value;
+            const deliveryArea = document.getElementById("delivery_select").value;
+            const itemsRaw = document.getElementById("items_text").value;
+            const items = itemsRaw.split(",").map(i => i.trim()).filter(i => i.length > 0);
+            if (!pickupArea || !deliveryArea || items.length === 0) {
+                alert("Por favor, selecione área de pickup, área de entrega e itens.");
+                return;
+            }
+            try {
+                const res = await axios.post(`${API_URL}/request_delivery_mission`, { pickup_area: pickupArea, delivery_area: deliveryArea, items });
+                alert(res.data.message || "Missão criada!");
+                updateRobots();
+            } catch (err) {
+                console.error("Erro ao solicitar missão de entrega:", err);
+            }
+        }
+
+        async function addDeliveryMission() {
+            const robotId = document.getElementById("robot_select").value;
+            const pickupArea = document.getElementById("pickup_select").value;
+            const deliveryArea = document.getElementById("delivery_select").value;
+            const itemsRaw = document.getElementById("items_text").value;
+            const items = itemsRaw.split(",").map(i => i.trim()).filter(i => i.length > 0);
+            if (!pickupArea || !deliveryArea || items.length === 0) {
+                alert("Por favor, selecione área de pickup, área de entrega e itens.");
+                return;
+            }
+            if (robotsData[robotId] && robotsData[robotId].current_delivery) {
+                alert("O robô selecionado já está em uma missão!");
+                return;
+            }
+            try {
+                const res = await axios.post(`${API_URL}/request_delivery_mission`, { pickup_area: pickupArea, delivery_area: deliveryArea, items });
+                alert(res.data.message || "Missão criada!");
+                updateRobots();
+            } catch (err) {
+                console.error("Erro ao solicitar missão de entrega:", err);
+            }
+        }
+        let cellsIndicator = {}; // Ex.: { "Montagem 1-1": "!", "Armazenamento 3-1": "!" }
+        let cellsStatus = {};
+
+        async function updateTractorStatus() {
+            try {
+                const res = await axios.get(`${API_URL}/trator_status`);
+                const statusData = res.data;
+                areas.forEach(area => {
+                    cellsStatus[area.name] = "noPiece";
+                });
+                if (statusData.tractors) {
+                    for (let tractorId in statusData.tractors) {
+                        let production = statusData.tractors[tractorId];
+                        production.steps.forEach(step => {
+                            cellsStatus[step.cell] = production.completed_steps.includes(step.cell) ? "complete" : "pending";
+                        });
+                    }
+                }
+                drawAreas(areas);
+                updatePiecesStatus();
+            } catch (error) {
+                console.error("Erro ao buscar status do trator:", error);
+            }
+        }
+
+
+        // Funções para a criação dinâmica do formulário de produção do trator
+        document.getElementById("add_step").addEventListener("click", () => {
+            const container = document.getElementById("production_steps");
+            const stepDiv = document.createElement("div");
+            stepDiv.className = "production-step row";
+            stepDiv.innerHTML = `
+        <div class="col-6">
+          <select class="cell_select form-control"></select>
+        </div>
+        <div class="col-4">
+          <input type="text" class="kit_input form-control" placeholder="Kits (ex: peca1, peca2)">
+        </div>
+        <div class="col-2">
+          <button class="btn btn-danger remove_step" onclick="removeStep(this)">X</button>
+        </div>
+      `;
+            container.appendChild(stepDiv);
+            populateCellSelects(areas);
+        });
+
+        function removeStep(button) {
+            const step = button.parentNode.parentNode;
+            step.remove();
+        }
+
+        document.getElementById("create_tractor").addEventListener("click", async () => {
+            const tractorId = document.getElementById("tractor_id").value;
+            if (!tractorId) {
+                alert("Informe o nome do trator!");
+                return;
+            }
+            const steps = [];
+            const stepDivs = document.querySelectorAll(".production-step");
+            stepDivs.forEach(div => {
+                const cell = div.querySelector(".cell_select").value;
+                const kitsRaw = div.querySelector(".kit_input").value;
+                const kits = kitsRaw.split(",").map(i => i.trim()).filter(i => i.length > 0);
+                if (cell && kits.length > 0) {
+                    steps.push({ cell, kits });
+                }
+            });
+            if (steps.length === 0) {
+                alert("Adicione pelo menos uma etapa com célula e kits.");
+                return;
+            }
+            try {
+                const res = await axios.post(`${API_URL}/tractor_production`, { tractor_id: tractorId, steps });
+                alert(res.data.message || "Trator criado com sucesso!");
+            } catch (err) {
+                console.error("Erro ao criar trator:", err);
+                alert("Erro ao criar trator.");
+            }
+        });
+
+        async function triggerTractorMissions(tractorId) {
+            if (!tractorId) return;
+            try {
+                const res = await axios.post(`${API_URL}/trigger_tractor_missions`, { tractor_id: tractorId });
+                alert(res.data.message);
+                updatePiecesStatus();
+            } catch (error) {
+                console.error("Erro ao acionar missões:", error);
+            }
+        }
+
+        async function updatePiecesStatus() {
+            try {
+                const res = await axios.get(`${API_URL}/pieces_status`);
+                const div = document.getElementById("pieces_status");
+                let html = "<h5>Status das Peças</h5><ul>";
+                for (const [piece, location] of Object.entries(res.data)) {
+                    html += `<li>${piece}: ${location}</li>`;
+                }
+                html += "</ul>";
+                div.innerHTML = html;
+            } catch (error) {
+                console.error("Erro ao atualizar status das peças:", error);
+            }
+        }
+
+
+        // Gerenciamento de Tratores - Modal de Edição
+        async function openEditTractorModal(tractorId) {
+            try {
+                const res = await axios.get(`${API_URL}/tractor_production`);
+                const tractor = res.data[tractorId];
+                if (!tractor) {
+                    alert("Trator não encontrado");
+                    return;
+                }
+
+                document.getElementById("editTractorId").value = tractorId;
+                const stepsContainer = document.getElementById("editTractorSteps");
+                stepsContainer.innerHTML = "";
+
+                (tractor.steps || []).forEach(step => {
+                    const stepDiv = document.createElement("div");
+                    stepDiv.className = "edit-step mb-2";
+                    stepDiv.innerHTML = `
+                <div class="row">
+                    <div class="col-5">
+                        <select class="form-control cell-select"></select>
+                    </div>
+                    <div class="col-5">
+                        <input type="text" class="form-control kit-input" placeholder="Kits (ex: peca1, peca2)" value="${step.kits ? step.kits.join(", ") : ""}">
+                    </div>
+                    <div class="col-2">
+                        <button type="button" class="btn btn-danger remove-edit-step"><i class="fas fa-times"></i></button>
+                    </div>
+                </div>
+            `;
+                    stepsContainer.appendChild(stepDiv);
+
+                    // Popula o select com as opções corretas
+                    const selectElement = stepDiv.querySelector(".cell-select");
+                    populateCellSelectsEdit(selectElement, step.cell);
+                    selectElement.value = step.cell; // Mantém o valor selecionado corretamente
+                });
+
+                // Exibe o modal de edição
+                const modalEl = document.getElementById("editTractorModal");
+                const modal = new bootstrap.Modal(modalEl);
+                modal.show();
+            } catch (error) {
+                console.error("Erro ao abrir modal de edição:", error);
+            }
+        }
+
+
+
+
+        document.getElementById("addEditStep").addEventListener("click", function () {
+            const stepsContainer = document.getElementById("editTractorSteps");
+
+            const stepDiv = document.createElement("div");
+            stepDiv.className = "edit-step mb-2";
+            stepDiv.innerHTML = `
+        <div class="row">
+            <div class="col-5">
+                <select class="form-control cell-select"></select>
+            </div>
+            <div class="col-5">
+                <input type="text" class="form-control kit-input" placeholder="Kits (ex: peca1, peca2)">
+            </div>
+            <div class="col-2">
+                <button type="button" class="btn btn-danger remove-edit-step"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+    `;
+
+            stepsContainer.appendChild(stepDiv);
+
+            // Preenche o select com as células disponíveis
+            const selectElement = stepDiv.querySelector(".cell-select");
+            populateCellSelectsEdit(selectElement);
+        });
+
+
+
+        document.addEventListener("click", function (e) {
+            if (e.target.closest(".remove-edit-step")) {
+                e.target.closest(".edit-step").remove();
+            }
+        });
+
+        document.getElementById("editTractorForm").addEventListener("submit", async function (e) {
+            e.preventDefault();
+            const tractorId = document.getElementById("editTractorId").value;
+            const stepElements = document.querySelectorAll("#editTractorSteps .edit-step");
+            const steps = [];
+            stepElements.forEach(stepEl => {
+                const cell = stepEl.querySelector(".cell-select").value;
+                const kitsStr = stepEl.querySelector(".kit-input").value;
+                const kits = kitsStr.split(",").map(item => item.trim()).filter(item => item);
+                if (cell) {
+                    steps.push({ cell, kits });
+                }
+            });
+            try {
+                const res = await axios.put(`${API_URL}/tractor_production/${tractorId}`, { tractor_id: tractorId, steps });
+                alert(res.data.message);
+                updateTractorList();
+                const modalEl = document.getElementById("editTractorModal");
+                const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                modalInstance.hide();
+            } catch (error) {
+                console.error("Erro ao atualizar trator:", error);
+                alert("Erro ao atualizar trator.");
+            }
+        });
+
+        async function editTractor(tractorId) {
+            openEditTractorModal(tractorId);
+        }
+
+        function populateCellSelectsEdit(selectElement, selectedValue = "") {
+            selectElement.innerHTML = "";
+            areas.forEach(area => {
+                let optionSelect = document.createElement("option");
+                optionSelect.value = area.name;
+                optionSelect.textContent = area.name;
+                selectElement.appendChild(optionSelect);
+            });
+        }
+
+
+
+        // Atualize a função updateTractorList para incluir o botão de "Acionar Missões" para cada trator
+        async function updateTractorList() {
+            try {
+                const res = await axios.get(`${API_URL}/tractor_production`);
+                const tractorUl = document.getElementById("tractor_ul");
+                tractorUl.innerHTML = "";
+
+                for (let tractorId in res.data) {
+                    const tractor = res.data[tractorId];
+                    let steps = tractor.steps || [];
+                    let completed = tractor.completed_steps || [];
+
+                    // Remove as etapas concluídas da lista de etapas
+                    steps = steps.filter(step => !completed.includes(step.cell));
+
+                    const formattedSteps = steps.map(step => {
+                        const kits = step.kits && step.kits.length ? step.kits.join(", ") : "Sem kits";
+                        return `<span class="badge bg-danger me-1">${step.cell} (${kits})</span>`;
+                    }).join(" ");
+
+                    const formattedCompleted = completed.map(cell => `<span class="badge bg-success me-1">${cell}</span>`).join(" ");
+
+                    let li = document.createElement("li");
+                    li.className = "list-group-item d-flex justify-content-between align-items-center";
+                    li.innerHTML = `
+                <div>
+                  <h5 class="mb-1">${tractorId}</h5>
+                  <p class="mb-1"><strong>Etapas:</strong> ${formattedSteps || '<span class="badge bg-warning">Nenhuma</span>'}</p>
+                  <p class="mb-0"><strong>Concluídas:</strong> ${formattedCompleted || '<span class="badge bg-warning">Nenhuma</span>'}</p>
+                </div>
+                <div>
+                  <button class="btn btn-sm btn-warning me-2" onclick="triggerTractorMissions('${tractorId}')">
+                    <i class="fas fa-play"></i>
+                  </button>
+                  <button class="btn btn-sm btn-primary me-2" onclick="editTractor('${tractorId}')">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  <button class="btn btn-sm btn-danger" onclick="deleteTractor('${tractorId}')">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </div>`;
+                    tractorUl.appendChild(li);
+                }
+            } catch (error) {
+                console.error("Erro ao atualizar lista de tratores:", error);
+            }
+        }
+
+        async function deleteTractor(tractorId) {
+            if (confirm("Deseja remover este trator?")) {
+                try {
+                    const res = await axios.delete(`${API_URL}/tractor_production/${tractorId}`);
+                    alert(res.data.message);
+                    updateTractorList();
+                } catch (error) {
+                    console.error("Erro ao remover trator:", error);
+                }
+            }
+        }
+
+        function createArrowCanvas(color, width, height) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d');
+            // Desenha uma seta apontando para cima 
+            ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(width / 2, 0); // ponta da seta 
+            ctx.lineTo(width, height); // canto direito da base
+            ctx.lineTo(width / 2, height * 0.7); // meio da base 
+            ctx.lineTo(0, height); // canto esquerdo da base
+            ctx.closePath(); ctx.fill();
+            return canvas;
+        }
+
+        async function updateMir() {
+            try {
+                const res = await axios.get(`${API_URL}/mir_status`);
+                if (res.data && res.data.position) {
+                    const mir = res.data; // Verifica se já existe um dataset para o MIR
+                    console.log(mir.position.orientation)
+                    // const angleRadians = Math.atan2(mir.orientation.y, mir.orientation.x); 
+                    // const angleDegrees = angleRadians * (180 / Math.PI);
+                    let mirDataset = robotChart.data.datasets.find(ds => ds.label === "MIR");
+                    if (!mirDataset) {
+                        mirDataset = {
+                            label: "MIR", data: [{ x: mir.position.x, y: mir.position.y }],
+                            pointStyle: createArrowCanvas("magenta", 20, 20),
+                            pointRotation: mir.position.orientation, // usa o ângulo calculado
+
+                            // em graus 
+                            backgroundColor: "magenta", borderColor: "black", borderWidth: 1, pointRadius: 20
+                        }; robotChart.data.datasets.push(mirDataset);
+                    } else { mirDataset.data = [{ x: mir.position.x, y: mir.position.y }]; mirDataset.pointRotation = mir.position.orientation; } robotChart.update('none');
+                }
+            } catch (error) { console.error("Erro ao atualizar status do MIR:", error); }
+        }
+
+        async function updateMirStatusPanel() {
+            try {
+                const res = await axios.get(`${API_URL}/mir_status`);
+                if (res.data && res.data.position) {
+                    const mir = res.data; // Atualize os campos com os dados do MIR. 
+                    // // Supondo que a resposta possua os seguintes campos: 
+                    // // - robot_name: nome do robô // - mission_text: string contendo a missão e a distância (ex.: "Moving to 'P_Lucas' (6.9 meters to goal)") // 
+                    // battery_percentage: nível da bateria // - state_text: estado atual (ex.: "Operacional") // - mode_text: modo atual (ex.: "Autônomo" ou "Manual") // 
+                    // position: { x, y, area } – onde area é o nome da área atual // - 
+                    // position.orientation: orientação em graus 
+                    document.getElementById("mir_name").textContent = mir.robot_name || "MIR";
+                    document.getElementById("mir_mission").innerHTML = `<strong>Missão:</strong> ${mir.mission_text || "Sem atividade"}`;
+                    document.getElementById("mir_battery").innerHTML = `<strong>Bateria:</strong> ${mir.battery_percentage !== undefined ? mir.battery_percentage + "%" : "N/A"}`;
+                    document.getElementById("mir_state").innerHTML = `<strong>Estado:</strong> ${mir.state_text || "N/A"}`;
+                    document.getElementById("mir_mode").innerHTML = `<strong>Modo:</strong> ${mir.mode_text || "N/A"}`; // Supondo que mir.position contenha x, y e area (nome da área) 
+                    const pos = mir.position;
+                    const area = "";
+                    document.getElementById("mir_position").innerHTML = `<strong>Posição:</strong> (${pos.x}, ${pos.y}) ${area ? "- " + area : ""}`;
+                    document.getElementById("mir_orientation").innerHTML = `<strong>Orientação:</strong> ${pos.orientation !== undefined ? pos.orientation + "°" : "N/A"}`;
+                }
+            } catch (error) {
+                console.error("Erro ao atualizar status do MIR:", error); document.getElementById("mir_name").textContent = "MIR - Erro";
+                document.getElementById("mir_mission").innerHTML = "<strong>Missão:</strong> Erro";
+                document.getElementById("mir_battery").innerHTML = "<strong>Bateria:</strong> Erro";
+                document.getElementById("mir_state").innerHTML = "<strong>Estado:</strong> Erro";
+                document.getElementById("mir_mode").innerHTML = "<strong>Modo:</strong> Erro";
+                document.getElementById("mir_position").innerHTML = "<strong>Posição:</strong> Erro";
+                document.getElementById("mir_orientation").innerHTML = "<strong>Orientação:</strong> Erro";
+            }
+        }
+        setInterval(updateMirStatusPanel, 3000);
+
+        // Chama essa função periodicamente ou no início para manter a lista atualizada
+        setInterval(updateTractorList, 5000);
+        updateTractorList();
+        // Atualiza periodicamente (por exemplo, a cada 5s)
+        setInterval(updatePiecesStatus, 5000);
+
+        async function start() {
+            createChart();
+
+            await loadMapData();
+            setInterval(updateRobots, 2000);
+            setInterval(updateTractorStatus, 2000);
+        }
+
+        start();
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

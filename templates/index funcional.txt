@@ -1,0 +1,432 @@
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Gerenciador de Robôs</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
+</head>
+<body class="container mt-4">
+
+    <h1 class="text-center">Gerenciador de Robôs</h1>
+
+    <div class="row">
+        <!-- Controles -->
+        <div class="col-md-4">
+            <h3>Adicionar Robô</h3>
+            <input id="robot_name" type="text" class="form-control" placeholder="Nome do Robô">
+            <input id="robot_x" type="number" class="form-control mt-2" placeholder="Posição X">
+            <input id="robot_y" type="number" class="form-control mt-2" placeholder="Posição Y">
+            <button class="btn btn-primary mt-2" onclick="addRobot()">Adicionar</button>
+
+            <h3 class="mt-4">Lista de Robôs</h3>
+            <ul id="robot_list" class="list-group"></ul>
+
+            <h3 class="mt-4">Adicionar Missão</h3>
+            <input id="goal_x" type="number" class="form-control mt-2" placeholder="Destino X">
+            <input id="goal_y" type="number" class="form-control mt-2" placeholder="Destino Y">
+            <button class="btn btn-success mt-2" onclick="addMission()">Definir Missão</button>
+
+            <h3 class="mt-4">Detalhes do Robô</h3>
+            <div id="robot_details" class="border p-2">Selecione um robô</div>
+        </div>
+
+        <!-- Mapa -->
+        <div class="col-md-8">
+            <canvas id="robotMap"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        let selectedRobot = null;
+        let robotChart;
+        let robotsData = {};
+        let walls = []; // Paredes são carregadas apenas uma vez
+        const customLabelsPlugin = {
+            id: "customLabels",
+            beforeDraw(chart) {
+                const ctx = chart.ctx;
+                ctx.save();
+
+                if (!chart.options.plugins.customLabels || !chart.options.plugins.customLabels.labels) {
+                    return;
+                }
+
+                chart.options.plugins.customLabels.labels.forEach(label => {
+                    const x = chart.scales.x.getPixelForValue(label.x);
+                    const y = chart.scales.y.getPixelForValue(label.y);
+
+                    ctx.font = "10px Arial";
+                    ctx.fillStyle = "black";
+                    ctx.textAlign = "center";
+                    ctx.fillText(label.text, x, y);
+                });
+
+                ctx.restore();
+            }
+        };
+
+        // Adiciona o plugin ao Chart.js
+        Chart.register(customLabelsPlugin);
+
+        function createChart() {
+            const ctx = document.getElementById('robotMap').getContext('2d');
+            robotChart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets: [] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    elements: { line: { tension: 0 } },
+                    scales: {
+                        x: { type: 'linear', position: 'bottom', min: -100, max: 100 },
+                        y: { min: -100, max: 100 }
+                    },
+                    plugins: {
+                        customLabels: { labels: [] } // Ativa o plugin para rótulos customizados
+                    }
+                }
+            });
+        }
+
+        async function loadWalls() {
+            try {
+                const res = await axios.get(`${API_URL}/status`);
+                if (res.data.walls) {
+                    walls = res.data.walls;
+                }
+                if (res.data.areas) {
+                    drawCells(res.data.areas);
+                }
+                if (res.data.doors) {
+                    drawDoors(res.data.doors);
+                }
+                drawWalls();
+            } catch (error) {
+                console.error("Erro ao carregar paredes:", error);
+            }
+        }
+        function drawCells(areas) {
+            areas.forEach(area => {
+                let x1 = area.x1, y1 = area.y1, x2 = area.x2, y2 = area.y2;
+
+                robotChart.data.datasets.push({
+                    label: area.name,
+                    data: [
+                        { x: x1, y: y1 }, { x: x2, y: y1 },
+                        { x: x2, y: y2 }, { x: x1, y: y2 },
+                        { x: x1, y: y1 } // Fecha o retângulo
+                    ],
+                    borderColor: "black",
+                    backgroundColor: "rgba(100, 100, 250, 0.2)", // 🔹 Exibe as áreas de trabalho
+                    borderWidth: 2,
+                    showLine: true,
+                    fill: true
+                });
+
+                // 🔹 Adicionar nome das células
+                robotChart.options.plugins = {
+                    annotation: {
+                        annotations: {
+                            [area.name]: {
+                                type: "label",
+                                xValue: (x1 + x2) / 2,
+                                yValue: (y1 + y2) / 2,
+                                content: area.name,
+                                font: {
+                                    size: 14,
+                                    weight: "bold"
+                                },
+                                textAlign: "center"
+                            }
+                        }
+                    }
+                };
+            });
+
+            robotChart.update();
+        }
+        function drawDoors(doors) {
+            doors.forEach(door => {
+                robotChart.data.datasets.push({
+                    label: "Porta",
+                    data: [{ x: door[0], y: door[1] }],
+                    backgroundColor: "green",
+                    borderColor: "black",
+                    borderWidth: 2,
+                    pointRadius: 5
+                });
+            });
+
+            robotChart.update();
+        }
+
+
+        function drawAreaLabels(labels) {
+            let ctx = document.getElementById('robotMap').getContext('2d');
+
+            labels.forEach(label => {
+                ctx.font = "14px Arial";
+                ctx.fillStyle = "black";
+                ctx.textAlign = "center";
+                ctx.fillText(label.text, label.x, label.y);
+            });
+        }
+        function drawAreas(areas) {
+            let areaDataset = {
+                label: "Áreas",
+                data: [],
+                borderColor: "black",
+                backgroundColor: "rgba(100, 100, 100, 0.3)", // Exibe as áreas
+                borderWidth: 2,
+                showLine: true,
+                fill: true
+            };
+
+            let textAnnotations = [];
+
+            areas.forEach(area => {
+                let x1 = area.x1, y1 = area.y1, x2 = area.x2, y2 = area.y2;
+
+                // Adiciona os pontos para desenhar a área no gráfico
+                areaDataset.data.push(
+                    { x: x1, y: y1 }, { x: x2, y: y1 },
+                    { x: x2, y: y2 }, { x: x1, y: y2 },
+                    { x: x1, y: y1 } // Fecha o retângulo
+                );
+
+                // Calcula o centro da área
+                let centerX = (x1 + x2) / 2;
+                let centerY = (y1 + y2) / 2;
+
+                // Adiciona o nome da área na lista para o plugin de desenho
+                textAnnotations.push({ text: area.name, x: centerX, y: centerY });
+            });
+
+            // Adiciona as áreas no gráfico
+            robotChart.data.datasets.push(areaDataset);
+            robotChart.update();
+
+            // Armazena os nomes das áreas para o plugin
+            robotChart.options.plugins.customLabels.labels = textAnnotations;
+            robotChart.update();
+        }
+
+
+
+
+
+        function drawWalls() {
+            let wallDataset = {
+                label: "Paredes",
+                data: walls.map(p => ({ x: p[0], y: p[1] })), 
+                backgroundColor: "black",
+                borderWidth: 1,
+                pointRadius: 4
+            };
+
+            let existingWalls = robotChart.data.datasets.find(ds => ds.label === "Paredes");
+            if (!existingWalls) {
+                robotChart.data.datasets.push(wallDataset);
+            }
+            robotChart.update();
+        }
+        let areas = [];
+                async function updateRobots() {
+            try {
+                const res = await axios.get(`${API_URL}/status`);
+                robotsData = res.data.robots;
+
+                // 🔹 Atualiza a lista de robôs
+                updateRobotList();
+
+                let datasets = robotChart.data.datasets.filter(ds => ds.label === "Paredes");
+
+                // 🔹 Redesenha as áreas sempre
+                if (res.data.areas) {
+                    drawAreas(res.data.areas);
+                    areas = res.data.areas; // 🔹 Armazena as áreas globalmente
+
+                }
+
+                Object.keys(robotsData).forEach((robot_id, index) => {
+                    let robot = robotsData[robot_id];
+                    let color = ['red', 'blue', 'green', 'purple', 'orange'][index % 5];
+
+                    datasets.push({
+                        label: `${robot_id} (trajeto)`,
+                        data: robot.trajectory.map(p => ({ x: p[0], y: p[1] })), 
+                        borderColor: color,
+                        showLine: true,
+                        fill: false,
+                        animation: false
+                    });
+
+                    datasets.push({
+                        label: `${robot_id} (Atual)`,
+                        data: [{ x: robot.position[0], y: robot.position[1] }],
+                        backgroundColor: color,
+                        borderColor: "black",
+                        borderWidth: 2,
+                        pointRadius: 6,
+                        animation: false
+                    });
+
+                    if (robot.goal) {
+                        datasets.push({
+                            label: `${robot_id} (Destino)`,
+                            data: [{ x: robot.goal[0], y: robot.goal[1] }],
+                            backgroundColor: "black",
+                            borderColor: "black",
+                            pointRadius: 6,
+                            pointStyle: 'cross',
+                            animation: false
+                        });
+                    }
+                });
+
+                robotChart.data.datasets = datasets;
+                robotChart.update('none');
+
+            } catch (error) {
+                console.error("Erro ao atualizar o mapa:", error);
+            }
+        }
+
+
+        function updateRobotList() {
+            const list = document.getElementById("robot_list");
+            list.innerHTML = '';  
+
+            Object.keys(robotsData).forEach(robot_id => {
+                const li = document.createElement("li");
+                li.classList.add("list-group-item");
+                li.textContent = robot_id;
+                li.onclick = () => selectRobot(robot_id);
+                list.appendChild(li);
+            });
+        }
+
+        function selectRobot(robot_id) {
+            selectedRobot = robot_id;
+            const robot = robotsData[robot_id];
+
+            // Montamos o texto de detalhes, incluindo o kit
+            document.getElementById("robot_details").innerHTML = `
+                <strong>Nome:</strong> ${robot_id} <br>
+                <strong>Posição:</strong> (${robot.position[0]}, ${robot.position[1]}) <br>
+                <strong>Missão:</strong> ${robot.goal 
+                    ? "("+robot.goal[0]+", "+robot.goal[1]+")" 
+                    : "Nenhuma"
+                }<br>
+                <strong>Kit:</strong> ${
+                    (robot.kit && robot.kit.length > 0) 
+                        ? robot.kit.join(", ") 
+                        : "Vazio"
+                }
+            `;
+        }
+
+        async function addRobot() {
+            const name = document.getElementById("robot_name").value;
+            const x = parseFloat(document.getElementById("robot_x").value);
+            const y = parseFloat(document.getElementById("robot_y").value);
+            if (name && !isNaN(x) && !isNaN(y)) {
+                await axios.post(`${API_URL}/add_robot`, { robot_id: name, x, y });
+                setTimeout(updateRobots, 1000); // 🔹 Aguarda um tempo para garantir que o robô seja carregado
+            }
+        }
+
+        async function addMission() {
+            if (!selectedRobot) {
+                alert("Selecione um robô primeiro!");
+                return;
+            }
+            const goal_x = parseFloat(document.getElementById("goal_x").value);
+            const goal_y = parseFloat(document.getElementById("goal_y").value);
+            if (!isNaN(goal_x) && !isNaN(goal_y)) {
+                await axios.post(`${API_URL}/add_mission`, { robot_id: selectedRobot, goal_x, goal_y });
+                updateRobots();
+            }
+        }
+
+        async function start() {
+            createChart();
+            await loadWalls();
+            drawWalls();
+            setInterval(updateRobots, 1000);
+        }
+        document.getElementById("robotMap").onclick = function(event) {
+            if (!selectedRobot) {
+                alert("Selecione um robô primeiro!");
+                return;
+            }
+
+            const canvas = event.target;
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // Converte as coordenadas do clique para o sistema de coordenadas do mapa
+            const chartX = robotChart.scales.x.getValueForPixel(x);
+            const chartY = robotChart.scales.y.getValueForPixel(y);
+
+            if (chartX !== undefined && chartY !== undefined) {
+                let areaName = getAreaName(chartX, chartY);
+
+                // Se a área for "custom", verifica se as coordenadas são válidas
+                if (areaName === "custom" && (isNaN(chartX) || isNaN(chartY))) {
+                    console.error("❌ Coordenadas inválidas para missão!");
+                    return;
+                }
+
+                console.log(`📍 Missão definida para ${selectedRobot} na área '${areaName}' em (${chartX.toFixed(2)}, ${chartY.toFixed(2)})`);
+
+                axios.post(`${API_URL}/add_mission`, {
+                    robot_id: selectedRobot,
+                    area_name: areaName !== "custom" ? areaName : null,  // Envia null se for "custom"
+                    goal_x: Math.round(chartX),  // 🔹 Arredondar antes de enviar
+                    goal_y: Math.round(chartY)
+                }).then(() => {
+                    updateRobots();
+                }).catch(err => {
+                    console.error("Erro ao definir missão:", err);
+                });
+
+            }
+        };
+
+        function getAreaName(x, y) {
+            if (!areas || areas.length === 0) {
+                console.warn("⚠️ Nenhuma área carregada.");
+                return "custom";
+            }
+
+            for (let area of areas) {
+                let x1 = Math.min(area.x1, area.x2);
+                let y1 = Math.min(area.y1, area.y2);
+                let x2 = Math.max(area.x1, area.x2);
+                let y2 = Math.max(area.y1, area.y2);
+
+                if (x >= x1 && x <= x2 && y >= y1 && y <= y2) {
+                    console.log(`✅ Célula detectada: ${area.name}`);
+                    return area.name;
+                }
+            }
+
+            console.log("❌ Nenhuma célula encontrada. Retornando 'custom'");
+            return "custom";
+        }
+        
+
+
+
+
+        start();
+    </script>
+</body>
+</html>
