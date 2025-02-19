@@ -1,5 +1,5 @@
 # **Documentação do Gerenciador de Robôs e Tratores**
-
+![Texto Alternativo](https://github.com/kakaz1n/fleet_simulator/blob/main/fleet_simulator.png)
 ## **1. Introdução**
 O Gerenciador de Robôs e Tratores é um sistema para controle, monitoramento e integração de robôs móveis e tratores em um ambiente automatizado. Ele permite a gestão de missões, rastreamento de peças e integração com tecnologias como ROS2 e MIR.
 
