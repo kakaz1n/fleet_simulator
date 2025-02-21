@@ -818,14 +818,14 @@ def delete_tractor_production(tractor_id: str):
 
 
 mir = MirRobot()
-
-@app.get("/mir_status") 
-def get_mir_status(): 
-    """ Endpoint para consultar o status do MIR. """ 
-    try: 
-        status = mir.get_status() 
-        return status 
-    except Exception as e: 
+@app.get("/mir_status")
+async def get_mir_status():
+    """ Endpoint para consultar o status do MIR. """
+    try:
+        status = await mir.get_status()  # ⬅️ Agora estamos aguardando corretamente
+        print(status)
+        return status
+    except Exception as e:
         return {"error": str(e)}
 
 

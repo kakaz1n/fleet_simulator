@@ -96,6 +96,8 @@
                     <p id="mir_mode"><strong>Modo:</strong> Carregando...</p>
                     <p id="mir_position"> <strong>Posição:</strong> Carregando... </p>
                     <p id="mir_orientation"><strong>Orientação:</strong> Carregando...</p>
+                    <p id="mir_path"><strong>Caminho:</strong> Carregando...</p>
+
                 </div>
             </div>
         </div>
@@ -124,6 +126,8 @@
             </div>
         </div>
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.0"></script>
 
     <script>
         const API_URL = "http://127.0.0.1:8000";
@@ -155,6 +159,7 @@
         function createChart() {
             const ctx = document.getElementById('robotMap').getContext('2d');
             Chart.register(customLabelsPlugin);
+
             robotChart = new Chart(ctx, {
                 type: 'scatter',
                 data: { datasets: [] },
@@ -164,16 +169,89 @@
                     animation: false,
                     elements: { line: { tension: 0 } },
                     scales: {
-                        x: { type: 'linear', position: 'bottom', min: -100, max: 100 },
-                        y: { min: -120, max: 120 }
+                        x: {
+                            type: 'linear',
+                            position: 'bottom',
+                            min: -100,  // Valor inicial do eixo X
+                            max: 100,   // Valor inicial do eixo X
+                        },
+                        y: {
+                            min: -120,  // Valor inicial do eixo Y
+                            max: 120,   // Valor inicial do eixo Y
+                        }
                     },
                     plugins: {
                         legend: { display: false },
-                        customLabels: { labels: [] }
+                        customLabels: { labels: [] },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: "xy",  // Permite mover horizontal e verticalmente
+                                modifierKey: null, // ❌ Remove necessidade de segurar "Ctrl" para mover
+                                overScaleMode: "xy", // Permite pan mesmo quando está com zoom
+                                threshold: 10 // Suaviza a movimentação ao arrastar
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true, // Habilita zoom pelo scroll do mouse
+                                },
+                                pinch: {
+                                    enabled: true // Habilita zoom por pinça em touchscreen
+                                },
+                                mode: "xy" // Permite zoom em ambos os eixos
+                            }
+                        }
                     }
                 }
             });
         }
+
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        const canvas = document.getElementById('robotMap');
+
+        // 📌 Evento ao pressionar o botão esquerdo do mouse
+        canvas.addEventListener("mousedown", function (event) {
+            if (event.button === 0) { // 0 = Botão esquerdo do mouse
+                isDragging = true;
+                lastMouseX = event.clientX;
+                lastMouseY = event.clientY;
+            }
+        });
+
+        // 📌 Evento ao mover o mouse
+        canvas.addEventListener("mousemove", function (event) {
+            if (!isDragging) return;
+
+            const deltaX = (event.clientX - lastMouseX) * 0.05; // Sensibilidade do movimento
+            const deltaY = (event.clientY - lastMouseY) * 0.05;
+
+            lastMouseX = event.clientX;
+            lastMouseY = event.clientY;
+
+            // Ajusta os limites do gráfico ao arrastar
+            robotChart.options.scales.x.min -= deltaX;
+            robotChart.options.scales.x.max -= deltaX;
+            robotChart.options.scales.y.min -= deltaY;
+            robotChart.options.scales.y.max -= deltaY;
+
+            robotChart.update("none"); // Atualiza sem animação para evitar flickering
+        });
+
+        // 📌 Evento ao soltar o botão do mouse
+        canvas.addEventListener("mouseup", function () {
+            isDragging = false;
+        });
+
+        // 📌 Evento para evitar que o movimento continue se o mouse sair do canvas
+        canvas.addEventListener("mouseleave", function () {
+            isDragging = false;
+        });
+
 
         async function loadMapData() {
             try {
@@ -336,7 +414,7 @@
                 updateRobotSelect();
                 redrawRobotsOnChart();
                 showAllRobotsDetails();
-                updateMir()
+                updateMir();
 
             } catch (error) {
                 console.error("Erro ao atualizar robôs:", error);
@@ -365,7 +443,7 @@
                 robotChart.data.datasets = robotChart.data.datasets.filter(ds => {
                     return (ds.label === "Paredes" || ds.label === "Porta" || ds.label.includes("Montagem")
                         || ds.label.includes("Produção") || ds.label.includes("Armazenamento")
-                        || ds.label.includes("Expedição") || ds.label === "MIR");
+                        || ds.label.includes("Expedição") || ds.label === "MIR" || ds.label === "Caminho MIR");
                 });
                 const colors = ["red", "blue", "green", "purple", "orange", "brown", "gray"];
                 let colorIndex = 0;
@@ -822,60 +900,174 @@
             return canvas;
         }
 
+        // const MAX_PATH_LENGTH = 20; // Número máximo de pontos visíveis no caminho
+
+        const THRESHOLD = 0.2; // Distância para considerar o ponto percorrido
+        let completedPoints = new Set(); // Armazena os pontos percorridos
+        let completedPointsMap = new Map(); // Mantém estado dos pontos no HTML
+        let lastMissionTarget = ""; // Armazena o último destino da missão
+
         async function updateMir() {
             try {
                 const res = await axios.get(`${API_URL}/mir_status`);
                 if (res.data && res.data.position) {
-                    const mir = res.data; // Verifica se já existe um dataset para o MIR
-                    console.log(mir.position.orientation)
-                    // const angleRadians = Math.atan2(mir.orientation.y, mir.orientation.x); 
-                    // const angleDegrees = angleRadians * (180 / Math.PI);
+                    const mir = res.data;
+                    console.log(mir.position.orientation);
+
+                    // 📌 Extrai o nome do destino da missão
+                    let missionMatch = mir.mission_text.match(/Moving to '([^']+)'/);
+                    let currentMissionTarget = missionMatch ? missionMatch[1] : "";
+
+                    // 📌 Se a missão mudou, reseta os pontos percorridos
+                    if (currentMissionTarget && currentMissionTarget !== lastMissionTarget) {
+                        lastMissionTarget = currentMissionTarget; // Atualiza o destino da missão
+                        resetMission(mir.path); // Reseta o caminho
+                    }
+
+                    // 📌 Atualiza a posição do MIR no gráfico
                     let mirDataset = robotChart.data.datasets.find(ds => ds.label === "MIR");
                     if (!mirDataset) {
                         mirDataset = {
-                            label: "MIR", data: [{ x: mir.position.x, y: mir.position.y }],
+                            label: "MIR",
+                            data: [{ x: mir.position.x, y: mir.position.y }],
                             pointStyle: createArrowCanvas("magenta", 20, 20),
-                            pointRotation: mir.position.orientation, // usa o ângulo calculado
+                            pointRotation: mir.position.orientation,
+                            backgroundColor: "magenta",
+                            borderColor: "black",
+                            borderWidth: 1,
+                            pointRadius: 20
+                        };
+                        robotChart.data.datasets.push(mirDataset);
+                    } else {
+                        mirDataset.data = [{ x: mir.position.x, y: mir.position.y }];
+                        mirDataset.pointRotation = mir.position.orientation;
+                    }
 
-                            // em graus 
-                            backgroundColor: "magenta", borderColor: "black", borderWidth: 1, pointRadius: 20
-                        }; robotChart.data.datasets.push(mirDataset);
-                    } else { mirDataset.data = [{ x: mir.position.x, y: mir.position.y }]; mirDataset.pointRotation = mir.position.orientation; } robotChart.update('none');
+                    // 📌 Atualiza o caminho do MIR e remove os pontos já percorridos
+                    if (mir.path && mir.path.length > 0) {
+                        let pathDataset = robotChart.data.datasets.find(ds => ds.label === "Caminho MIR");
+
+                        if (!pathDataset) {
+                            pathDataset = {
+                                label: "Caminho MIR",
+                                data: [...mir.path.map(p => ({ x: p.x, y: p.y }))],
+                                backgroundColor: "rgba(0, 0, 255, 0.5)", // Azul semitransparente
+                                borderColor: "blue",
+                                borderWidth: 1,
+                                showLine: true,
+                                pointRadius: 5
+                            };
+                            robotChart.data.datasets.push(pathDataset);
+                        }
+
+                        // 📌 Verifica se o MIR passou por algum ponto do caminho
+                        let remainingPoints = [];
+                        for (let p of pathDataset.data) {
+                            const distance = Math.sqrt(
+                                Math.pow(mir.position.x - p.x, 2) + Math.pow(mir.position.y - p.y, 2)
+                            );
+                            const key = `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+
+                            if (distance <= THRESHOLD) {
+                                completedPoints.add(key); // Adiciona aos pontos percorridos
+                                completedPointsMap.set(key, `<span style="color: green;">(${p.x.toFixed(2)}, ${p.y.toFixed(2)})</span>`);
+                            } else {
+                                remainingPoints.push(p); // Mantém no caminho se não foi percorrido
+                            }
+                        }
+                        pathDataset.data = remainingPoints; // Atualiza os pontos restantes no gráfico
+
+                        console.log("Pontos percorridos:", completedPoints);
+
+                        // 📌 Atualiza apenas os pontos no HTML sem sobrescrever tudo
+                        let htmlPath = mir.path.map(p => {
+                            const key = `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+                            return completedPointsMap.get(key) || `(${p.x.toFixed(2)}, ${p.y.toFixed(2)})`;
+                        }).join(" ➝ ");
+
+                        document.getElementById("mir_path").innerHTML = `<strong>Caminho:</strong> ${htmlPath}`;
+                    }
+
+                    // 📌 Atualiza o gráfico sem animação para evitar piscadas
+                    robotChart.update('none');
                 }
-            } catch (error) { console.error("Erro ao atualizar status do MIR:", error); }
+            } catch (error) {
+                console.error("Erro ao atualizar status do MIR:", error);
+            }
         }
+
+
+        // 📌 Função para resetar os pontos quando uma nova missão começar
+        function resetMission(newPath) {
+            completedPoints.clear(); // Reseta os pontos percorridos
+
+            // Reseta o caminho no gráfico
+            let pathDataset = robotChart.data.datasets.find(ds => ds.label === "Caminho MIR");
+            if (pathDataset) {
+                pathDataset.data = newPath.map(p => ({ x: p.x, y: p.y })); // Adiciona os novos pontos
+            } else {
+                robotChart.data.datasets.push({
+                    label: "Caminho MIR",
+                    data: newPath.map(p => ({ x: p.x, y: p.y })),
+                    backgroundColor: "rgba(0, 0, 255, 0.5)", // Azul semitransparente
+                    borderColor: "blue",
+                    borderWidth: 2,
+                    showLine: true,
+                    pointRadius: 5
+                });
+            }
+
+            // Atualiza o caminho na interface HTML
+            document.getElementById("mir_path").innerHTML = `
+        <strong>Caminho:</strong> ${newPath.map(p => `(${p.x.toFixed(2)}, ${p.y.toFixed(2)})`).join(" ➝ ")}
+    `;
+
+            // Atualiza o gráfico
+            robotChart.update('none');
+        }
+
+
+
+
+
 
         async function updateMirStatusPanel() {
             try {
                 const res = await axios.get(`${API_URL}/mir_status`);
                 if (res.data && res.data.position) {
-                    const mir = res.data; // Atualize os campos com os dados do MIR. 
-                    // // Supondo que a resposta possua os seguintes campos: 
-                    // // - robot_name: nome do robô // - mission_text: string contendo a missão e a distância (ex.: "Moving to 'P_Lucas' (6.9 meters to goal)") // 
-                    // battery_percentage: nível da bateria // - state_text: estado atual (ex.: "Operacional") // - mode_text: modo atual (ex.: "Autônomo" ou "Manual") // 
-                    // position: { x, y, area } – onde area é o nome da área atual // - 
-                    // position.orientation: orientação em graus 
+                    const mir = res.data; // Atualiza os campos com os dados do MIR
                     document.getElementById("mir_name").textContent = mir.robot_name || "MIR";
                     document.getElementById("mir_mission").innerHTML = `<strong>Missão:</strong> ${mir.mission_text || "Sem atividade"}`;
                     document.getElementById("mir_battery").innerHTML = `<strong>Bateria:</strong> ${mir.battery_percentage !== undefined ? mir.battery_percentage + "%" : "N/A"}`;
                     document.getElementById("mir_state").innerHTML = `<strong>Estado:</strong> ${mir.state_text || "N/A"}`;
-                    document.getElementById("mir_mode").innerHTML = `<strong>Modo:</strong> ${mir.mode_text || "N/A"}`; // Supondo que mir.position contenha x, y e area (nome da área) 
+                    document.getElementById("mir_mode").innerHTML = `<strong>Modo:</strong> ${mir.mode_text || "N/A"}`;
+
                     const pos = mir.position;
                     const area = "";
                     document.getElementById("mir_position").innerHTML = `<strong>Posição:</strong> (${pos.x}, ${pos.y}) ${area ? "- " + area : ""}`;
-                    document.getElementById("mir_orientation").innerHTML = `<strong>Orientação:</strong> ${pos.orientation !== undefined ? pos.orientation + "°" : "N/A"}`;
+                    document.getElementById("mir_orientation").innerHTML = `<strong>Orientação:</strong> ${pos.orientation !== undefined ? mir.position.orientation.toFixed(2) + "°" : "N/A"}`;
+
+                    // ❌ Removendo esta linha para evitar sobrescrita do caminho e piscada:
+                    // document.getElementById("mir_path").innerHTML = `<strong>Caminho:</strong> ...`;
+
                 }
             } catch (error) {
-                console.error("Erro ao atualizar status do MIR:", error); document.getElementById("mir_name").textContent = "MIR - Erro";
+                console.error("Erro ao atualizar status do MIR:", error);
+                document.getElementById("mir_name").textContent = "MIR - Erro";
                 document.getElementById("mir_mission").innerHTML = "<strong>Missão:</strong> Erro";
                 document.getElementById("mir_battery").innerHTML = "<strong>Bateria:</strong> Erro";
                 document.getElementById("mir_state").innerHTML = "<strong>Estado:</strong> Erro";
                 document.getElementById("mir_mode").innerHTML = "<strong>Modo:</strong> Erro";
                 document.getElementById("mir_position").innerHTML = "<strong>Posição:</strong> Erro";
                 document.getElementById("mir_orientation").innerHTML = "<strong>Orientação:</strong> Erro";
+
+                // ❌ Removendo para evitar sobrescrita do caminho e piscada:
+                // document.getElementById("mir_path").innerHTML = "<strong>Caminho:</strong> Erro";
             }
         }
-        setInterval(updateMirStatusPanel, 3000);
+
+
+        setInterval(updateMirStatusPanel, 50);
 
         // Chama essa função periodicamente ou no início para manter a lista atualizada
         setInterval(updateTractorList, 5000);
@@ -887,8 +1079,8 @@
             createChart();
 
             await loadMapData();
-            setInterval(updateRobots, 2000);
-            setInterval(updateTractorStatus, 2000);
+            setInterval(updateRobots, 500);
+            setInterval(updateTractorStatus, 500);
         }
 
         start();

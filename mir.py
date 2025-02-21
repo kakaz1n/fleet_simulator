@@ -1,30 +1,76 @@
 import requests
+import asyncio
+import websockets
+import json
 
 class MirRobot: 
     def __init__(self, 
                  base_url="http://10.83.131.155/api/v2.0.0", 
+                 ws_url="ws://10.83.131.155:9090",
                  auth_token="Basic ZGlzdHJpYnV0b3I6NjJmMmYwZjFlZmYxMGQzMTUyYzk1ZjZmMDU5NjU3NmU0ODJiYjhlNDQ4MDY0MzNmNGNmOTI5NzkyODM0YjAxNA==",
                  language="en_US"):
         """
-        Inicializa a classe do MIR com a URL base da API e os cabeçalhos necessários.
+        Inicializa a classe do MIR com a URL base da API, a URL do WebSocket e os cabeçalhos necessários.
         
         :param base_url: URL base da API do MIR.
+        :param ws_url: URL do WebSocket do ROS para comunicação em tempo real.
         :param auth_token: Token de autorização.
         :param language: Cabeçalho de idioma.
         """
         self.base_url = base_url 
+        self.ws_url = ws_url
         self.headers = {
             "Authorization": auth_token,
             "Accept-Language": language,
             "accept": "application/json"
         }
 
-    def get_status(self):
+    async def get_status(self):
         url = f"{self.base_url}/status"
         response = requests.get(url, headers=self.headers)
         response.raise_for_status()
-        return response.json()
+        status_data = response.json()
 
+        # Obtém o caminho da missão de forma assíncrona
+        status_data["path"] = await self.get_mission_path_ws()
+
+        return status_data
+
+    async def get_mission_path_ws(self):
+        """
+        Obtém o caminho da missão via WebSocket, ouvindo o tópico '/mirwebapp/web_path'.
+        Retorna uma lista de coordenadas (x, y).
+        """
+        uri = self.ws_url
+        path_data = []
+
+        try:
+            async with websockets.connect(uri) as websocket:
+                print("✅ Conectado ao ROS WebSocket!")
+
+                # Assinar o tópico do caminho da missão
+                subscribe_msg = {
+                    "op": "subscribe",
+                    "topic": "/mirwebapp/web_path"
+                }
+                await websocket.send(json.dumps(subscribe_msg))
+
+                # Esperar pela primeira mensagem com dados do caminho
+                mensagem = await websocket.recv()
+                print(f"📩 Mensagem recebida: {mensagem}")
+
+                # Decodificar a mensagem JSON
+                data = json.loads(mensagem)
+                if "msg" in data:
+                    caminho = data["msg"]
+                    path_data = [{"x": x, "y": y} for x, y in zip(caminho["x"], caminho["y"])]
+
+
+        except Exception as e:
+            print(f"🚨 Erro ao conectar ao WebSocket: {e}")
+
+        return path_data
+    
     def move_to(self, goal_x, goal_y):
         url = f"{self.base_url}/status"
         payload = {
@@ -58,7 +104,8 @@ class MirRobot:
             "y": position.get("y"),
             "robot_name": status.get("robot_name"),
             "battery": status.get("battery_percentage"),
-            "state": status.get("state_text")
+            "state": status.get("state_text"),
+            'path': self.get_mission_path_ws()
         }
     
     def get_position_details(self, position_guid):
@@ -165,13 +212,13 @@ class MirRobot:
 if __name__ == "__main__":
     robot = MirRobot()
     
-    positions = robot.get_mission_move_positions()
-    if positions:
-        print("Posições do caminho planejado para a missão atual:")
-        for pos in positions:
-            # Ajuste os campos conforme o formato da resposta da API para a posição
-            x = pos.get("x") or pos.get("position", {}).get("x")
-            y = pos.get("y") or pos.get("position", {}).get("y")
-            print(f"Posição: x={x}, y={y}")
-    else:
-        print("Não foi possível recuperar as posições do caminho planejado.")
+    # positions = robot.get_mission_move_positions()
+    # if positions:
+    #     print("Posições do caminho planejado para a missão atual:")
+    #     for pos in positions:
+    #         # Ajuste os campos conforme o formato da resposta da API para a posição
+    #         x = pos.get("x") or pos.get("position", {}).get("x")
+    #         y = pos.get("y") or pos.get("position", {}).get("y")
+    #         print(f"Posição: x={x}, y={y}")
+    # else:
+    #     print("Não foi possível recuperar as posições do caminho planejado.")
