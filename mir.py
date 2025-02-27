@@ -25,7 +25,7 @@ class MirRobot:
             "accept": "application/json"
         }
 
-    async def get_status(self):
+    async def get_status(self): #####QUANDO NAO TEM ELE TRAVA O SISTEMA
         url = f"{self.base_url}/status"
         response = requests.get(url, headers=self.headers)
         response.raise_for_status()
@@ -36,38 +36,48 @@ class MirRobot:
 
         return status_data
 
-    async def get_mission_path_ws(self):
+    async def get_mission_path_ws(self, timeout: float = 5.0) -> list:
         """
         Obtém o caminho da missão via WebSocket, ouvindo o tópico '/mirwebapp/web_path'.
         Retorna uma lista de coordenadas (x, y).
+        Se não receber nenhuma mensagem em 'timeout' segundos, retorna lista vazia.
         """
         uri = self.ws_url
         path_data = []
 
         try:
             async with websockets.connect(uri) as websocket:
-                print("✅ Conectado ao ROS WebSocket!")
-
-                # Assinar o tópico do caminho da missão
+                # Monta a mensagem de subscrição
                 subscribe_msg = {
                     "op": "subscribe",
                     "topic": "/mirwebapp/web_path"
                 }
                 await websocket.send(json.dumps(subscribe_msg))
 
-                # Esperar pela primeira mensagem com dados do caminho
-                mensagem = await websocket.recv()
-                print(f"📩 Mensagem recebida: {mensagem}")
+                # Usa asyncio.wait_for para evitar bloqueio indefinido:
+                mensagem = await asyncio.wait_for(websocket.recv(), timeout=timeout)
 
-                # Decodificar a mensagem JSON
                 data = json.loads(mensagem)
                 if "msg" in data:
                     caminho = data["msg"]
-                    path_data = [{"x": x, "y": y} for x, y in zip(caminho["x"], caminho["y"])]
+                    # Cria lista de dicionários [{x:..., y:...}, ...]
+                    path_data = [
+                        {"x": x, "y": y}
+                        for x, y in zip(caminho["x"], caminho["y"])
+                    ]
 
+                # Opcional: Fazer 'unsubscribe' antes de encerrar,
+                # se desejarmos interromper o recebimento
+                unsubscribe_msg = {
+                    "op": "unsubscribe",
+                    "topic": "/mirwebapp/web_path"
+                }
+                await websocket.send(json.dumps(unsubscribe_msg))
 
+        except asyncio.TimeoutError:
+            print(f"⚠️ Timeout de {timeout}s ao aguardar dados do WebSocket.")
         except Exception as e:
-            print(f"🚨 Erro ao conectar ao WebSocket: {e}")
+            print(f"🚨 Erro ao conectar ou receber do WebSocket: {e}")
 
         return path_data
     

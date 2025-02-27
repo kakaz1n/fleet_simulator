@@ -62,7 +62,7 @@ def dijkstra(start, goal, walls, corridors, doors, cells, map_limits=(-100, 100,
     came_from = {}
     g_score = {start: 0}
 
-    print(f"🔍 Iniciando Dijkstra de {start} para {goal}")
+    # print(f"🔍 Iniciando Dijkstra de {start} para {goal}")
 
     # Verificações iniciais
     if start == goal:
@@ -117,7 +117,7 @@ def dijkstra(start, goal, walls, corridors, doors, cells, map_limits=(-100, 100,
                 else:
                     annotated_path.append(str(position))
 
-            print(f"✅ Caminho encontrado: {annotated_path}")
+            # print(f"✅ Caminho encontrado: {annotated_path}")
             return path
 
         x, y = current
@@ -163,6 +163,8 @@ class Robot(Node):
         self.position = (x, y)
         self.goal = None    
         self.trajectory = []
+        self.tractor_id = None  # Inicializa como None por padrão
+
         # Convertendo listas para conjuntos de tuplas
         # walls = set(map(tuple, walls))
         # doors = set(map(tuple, doors))
@@ -213,8 +215,16 @@ class Robot(Node):
                 self.goal = tuple(data['goal'])
                 self.get_logger().info(f"🚀 Missão recebida: {self.goal}")
 
+                # 🔹 Atualiza o `tractor_id`
+                self.tractor_id = data.get("tractor_id", None)
+
+                # 🔹 Agora iniciar movimento automaticamente
+                self.move_towards_goal()
+
         except json.JSONDecodeError as e:
             self.get_logger().error(f"❌ Erro ao decodificar JSON: {e}")
+
+
 
     def move_towards_goal(self):
         """Move o robô para o objetivo seguindo o caminho planejado."""
@@ -328,7 +338,7 @@ class Robot(Node):
                         colored_path.append(f"\033[93m{pos}\033[0m")
                     else:
                         colored_path.append(str(pos))
-                print(f"✅ Caminho encontrado: {colored_path}")
+                # print(f"✅ Caminho encontrado: {colored_path}")
 
 
                 
@@ -353,11 +363,13 @@ class Robot(Node):
             'area': area_name,
             'estimated_time': estimated_time,
             'trajectory': self.trajectory,  # Caminho já percorrido
-            'planned_path': self.path if hasattr(self, "path") else []  # Caminho planejado
+            'planned_path': self.path if hasattr(self, "path") else [],  # Caminho planejado
+            'tractor_id': self.tractor_id  # ✅ Sempre incluído no status
         })
         self.publisher.publish(status_msg)
 
-        self.get_logger().info(f"📡 Status enviado: {status_msg.data}")
+        # self.get_logger().info(f"📡 Status enviado: {status_msg.data}")
+
 
 def main():
     """Inicia o robô com os argumentos passados pelo subprocesso"""
